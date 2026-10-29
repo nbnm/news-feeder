@@ -429,7 +429,8 @@ struct DigestSettings: View {
     @State private var topicText = ""
     @State private var configuration: TelegramConfiguration?
     @State private var botToken = ""
-    @State private var channel = ""
+    @State private var destination = ""
+    @State private var destinationType = "private"
     @State private var targets: [TelegramTarget] = []
     @State private var confirmRetry = false
     @State private var working = false
@@ -462,40 +463,62 @@ struct DigestSettings: View {
                 Text("The token stays on your collection service and is never returned to the app. Leave the field empty to keep the saved token.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Destination channel") {
-                TextField("Channel", text: $channel, prompt: Text("@your_channel or https://t.me/your_channel"))
-                Text("Create a Telegram channel, add your bot as an administrator, and allow it to post messages. Enter the channel's own link, rather than the bot's profile. Private channels can use Find Channels after adding the bot.")
-                    .font(.caption).foregroundStyle(.secondary)
+            Section("Delivery destination") {
+                Picker("Deliver to", selection: Binding(get: { destinationType }, set: {
+                    destinationType = $0; destination = ""; targets = []; error = nil; notice = nil
+                })) {
+                    Text("Private chat with the bot").tag("private")
+                    Text("Telegram channel").tag("channel")
+                }
+                if destinationType == "private" {
+                    Text("Open your bot in Telegram and press Start. Then choose Find My Chat and select your private chat. The bot's own username is its profile, so delivery uses your chat ID.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let name = configuration?.botUsername, !name.isEmpty,
+                       let url = URL(string: "https://t.me/" + name) {
+                        Link("Open @" + name, destination: url)
+                    }
+                    TextField("Your private chat ID", text: $destination, prompt: Text("Use Find My Chat after pressing Start"))
+                } else {
+                    TextField("Channel", text: $destination, prompt: Text("@your_channel or https://t.me/your_channel"))
+                    Text("Create a Telegram channel, add your bot as an administrator, and allow it to post messages. Enter the channel's own link, rather than the bot's profile. Private channels can use Find Channels after adding the bot.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
-                    Button("Find Channels") {
+                    Button(destinationType == "private" ? "Find My Chat" : "Find Channels") {
                         perform {
-                            targets = try await model.api.telegramTargets().filter { $0.type == "channel" }
-                            if targets.isEmpty { notice = "No channels found yet. Add the bot as a channel administrator, then try again." }
+                            targets = try await model.api.telegramTargets().filter { $0.type == destinationType }
+                            if targets.count == 1 { destination = targets[0].id }
+                            if targets.isEmpty {
+                                notice = destinationType == "private"
+                                    ? "No private chat found yet. Open your bot, press Start, then try again."
+                                    : "No channels found yet. Add the bot as a channel administrator, then try again."
+                            }
                         }
                     }.disabled(working || !model.online || configuration?.botTokenConfigured != true)
-                    Button("Verify & Connect Channel") {
+                    Button(destinationType == "private" ? "Connect My Chat" : "Verify & Connect Channel") {
                         perform {
-                            configuration = try await model.api.connectTelegramChannel(channel.trimmingCharacters(in: .whitespacesAndNewlines))
-                            channel = configuration?.chatId ?? channel
-                            notice = "Channel verified · the bot can publish here"
+                            configuration = try await model.api.connectTelegramDestination(
+                                destination.trimmingCharacters(in: .whitespacesAndNewlines), type: destinationType)
+                            destination = configuration?.chatId ?? destination
+                            notice = destinationType == "private" ? "Private chat connected" : "Channel verified · the bot can publish here"
                             await model.sync()
                         }
-                    }.disabled(working || !model.online || channel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || configuration?.botTokenConfigured != true)
+                    }.disabled(working || !model.online || destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || configuration?.botTokenConfigured != true)
                     if working { ProgressView().controlSize(.small) }
                 }
                 if !targets.isEmpty {
-                    Picker("Discovered channels", selection: $channel) {
-                        Text("Choose a channel").tag("")
+                    Picker(destinationType == "private" ? "Your private chat" : "Discovered channels", selection: $destination) {
+                        Text("Choose a destination").tag("")
                         ForEach(targets) { Text($0.title).tag($0.id) }
                     }
                 }
                 if configuration?.verified == true {
-                    Label("Connected to " + (configuration?.title ?? "channel"), systemImage: "checkmark.circle.fill")
+                    Label("Connected to " + (configuration?.title ?? "Telegram"), systemImage: "checkmark.circle.fill")
                         .foregroundStyle(ReaderPalette.accent)
                 }
             }
             Section("Daily digest") {
-                Toggle("Publish a daily digest to the channel", isOn: $preferences.telegramEnabled)
+                Toggle("Send a daily digest", isOn: $preferences.telegramEnabled)
                     .disabled(!model.online || (configuration?.verified != true && !preferences.telegramEnabled))
                 Stepper("Up to \(preferences.digestSize) stories", value: $preferences.digestSize, in: 1...20)
                 Picker("Publish daily at", selection: $preferences.deliveryHour) {
@@ -503,7 +526,7 @@ struct DigestSettings: View {
                 }
                 TextField("Timezone", text: $preferences.timezone)
                 TextField("Digest topic interests", text: $topicText)
-                Text("Each digest includes prioritized stories, TLDRs, and source links. Daily posts are tracked to prevent duplicate publication. A missed run is checked after this Mac wakes or you log in; the Mac must be on and online.")
+                Text("Each digest includes prioritized stories, TLDRs, and source links. Deliveries are tracked to prevent duplicates. A missed run is checked after this Mac wakes or you log in; the Mac must be on and online.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Save Schedule") {
@@ -539,7 +562,7 @@ struct DigestSettings: View {
                     LabeledContent("Posts", value: "\(delivery.sentCount) / \(delivery.totalCount)")
                     if let issue = delivery.error { Text(issue).font(.caption).foregroundStyle(.orange) }
                     if delivery.state == "uncertain" || delivery.state == "sending" {
-                        Text("Check the channel before posting again. An interrupted send is not automatically repeated.")
+                        Text("Check Telegram before sending again. An interrupted send is not automatically repeated.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if delivery.state != "sent" {
@@ -550,7 +573,7 @@ struct DigestSettings: View {
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
         }.formStyle(.grouped)
-        .confirmationDialog("Have you checked the channel?", isPresented: $confirmRetry) {
+        .confirmationDialog("Have you checked Telegram?", isPresented: $confirmRetry) {
             Button("The pending post is missing — retry") {
                 if let delivery = configuration?.lastDelivery {
                     perform {
@@ -563,7 +586,7 @@ struct DigestSettings: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Retry only after checking that the next pending post did not arrive. Posts already confirmed as sent will be skipped.")
+            Text("Retry only after checking that the next pending message did not arrive. Messages already confirmed as sent will be skipped.")
         }
         .onAppear {
             preferences = model.preferences
@@ -572,7 +595,8 @@ struct DigestSettings: View {
         .task {
             do {
                 configuration = try await model.api.telegramConfiguration()
-                channel = configuration?.chatId ?? ""
+                destinationType = configuration?.verified == true ? (configuration?.targetType ?? "private") : "private"
+                destination = configuration?.chatId ?? ""
             } catch { self.error = error.localizedDescription }
         }
     }

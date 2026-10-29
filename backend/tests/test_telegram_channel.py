@@ -32,7 +32,7 @@ def application(tmp_path):
 @pytest.fixture
 def telegram_api(monkeypatch):
     calls = []
-    state = {"can_post": True, "chat_type": "channel"}
+    state = {"can_post": True, "chat_type": "channel", "chat_id": int(CHANNEL)}
 
     def respond(request):
         method = request.url.path.rsplit("/", 1)[-1]
@@ -40,13 +40,13 @@ def telegram_api(monkeypatch):
         calls.append((method, body))
         result = {
             "getMe": {"id": 123456789, "is_bot": True, "username": "example_news_bot"},
-            "getChat": {"id": int(CHANNEL), "type": state["chat_type"], "title": "Example news"},
+            "getChat": {"id": state["chat_id"], "type": state["chat_type"], "title": "Example news"},
             "getChatMember": {"status": "administrator", "can_post_messages": state["can_post"]},
             "getUpdates": [
                 {
                     "update_id": 7,
-                    "my_chat_member": {
-                        "chat": {"id": int(CHANNEL), "type": "channel", "title": "Example news"}
+                    ("message" if state["chat_type"] == "private" else "my_chat_member"): {
+                        "chat": {"id": state["chat_id"], "type": state["chat_type"], "title": "Example news"}
                     },
                 }
             ],
@@ -98,6 +98,45 @@ def test_channel_target_must_be_a_channel(application, telegram_api):
         response = client.put("/telegram/config", json={"bot_token": TOKEN, "chat_id": "@example_news"})
         assert response.status_code == 422
         assert not client.get("/telegram/config").json()["configured"]
+
+
+def test_private_chat_configuration_and_delivery(application, telegram_api):
+    calls, state = telegram_api
+    state.update(chat_type="private", chat_id=223344556, can_post=False)
+    with TestClient(application, headers={"Authorization": "Bearer local-key"}) as client:
+        response = client.put(
+            "/telegram/config",
+            json={"bot_token": TOKEN, "chat_id": "223344556", "target_type": "private"},
+        )
+        assert response.status_code == 200
+        config = response.json()
+        assert config["verified"] and config["target_type"] == "private" and config["chat_id"] == "223344556"
+        assert client.get("/telegram/targets").json() == [
+            {"id": "223344556", "title": "Example news", "type": "private"}
+        ]
+        assert not any(method in {"sendMessage", "getChatMember"} for method, _ in calls)
+        assert client.put("/preferences", json={"telegram_enabled": True}).status_code == 200
+        assert client.get("/status").json()["telegram_background_configured"]
+        sent = client.post("/telegram/send", json={"kind": "feed"})
+        assert sent.status_code == 200 and sent.json()["state"] == "sent"
+        posts = [body for method, body in calls if method == "sendMessage"]
+        assert len(posts) == 1 and posts[0]["chat_id"] == "223344556"
+
+
+def test_private_chat_cannot_be_the_bot_itself(application, telegram_api):
+    calls, state = telegram_api
+    state.update(chat_type="private", chat_id=123456789)
+    with TestClient(application, headers={"Authorization": "Bearer local-key"}) as client:
+        rejected = client.put(
+            "/telegram/config", json={"bot_token": TOKEN, "chat_id": "123456789", "target_type": "private"}
+        )
+        assert rejected.status_code == 422 and "bot's own ID" in rejected.json()["detail"]
+        username = client.put(
+            "/telegram/config", json={"bot_token": TOKEN, "chat_id": "@someone_else", "target_type": "private"}
+        )
+        assert username.status_code == 422 and "Find My Chat" in username.json()["detail"]
+        assert not client.get("/telegram/config").json()["configured"]
+        assert not any(method == "sendMessage" for method, _ in calls)
 
 
 def test_retry_requires_confirmation_and_skips_acknowledged_posts(application, telegram_api):

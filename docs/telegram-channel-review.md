@@ -13,4 +13,10 @@ Findings resolved during review:
 
 Verification: 88 backend tests passed; Ruff and whitespace checks passed; native archive/decoding checks passed; debug and release builds passed. The frozen service passed startup, version, source persistence, configuration redaction, and unconfigured-runner checks. The installed app reopened with its existing 4,675-story archive and displayed the saved bot and channel-permission error correctly.
 
-No live Telegram messages were sent during verification. External API behavior is mocked in automated tests; live bot identity and destination-permission checks were read-only. The local background publisher requires an awake, online Mac. Git publication requires a configured remote.
+Initial channel verification sent no live Telegram messages. External API behavior is mocked in automated tests; initial bot identity and destination-permission checks were read-only. The local background publisher requires an awake, online Mac. Git publication requires a configured remote.
+
+## Private-chat follow-up
+
+The owner selected private-chat delivery and pressed Start. Settings now supports both private chats and channels, with discovery and connection labels for each mode. Private connections require a user chat ID and reject the bot's own username and numeric ID. Manual review covered the follow-up diff, including preservation of the saved destination during view loading and clearing unsaved selection when switching delivery modes.
+
+All 90 backend tests passed, followed by 14 focused Telegram tests after adding private-chat discovery coverage. Ruff, whitespace checks, native archive checks, and debug/release builds passed. The installed v0.2.1 app preserved the archive and displayed the connected private chat. Enabling the schedule loaded the credential-free background job, and Telegram acknowledged both messages of the first daily digest. A second scheduled request was skipped with the same receipt and no repeated send. The app displayed the enabled schedule and Sent 2 / 2.

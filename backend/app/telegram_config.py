@@ -109,7 +109,11 @@ async def configure(settings, session, value, client):
         raise TelegramSetupError(
             "That is the bot's profile. Enter the destination channel or your private chat ID."
         )
+    if value.target_type == "private" and not value.chat_id.isdecimal():
+        raise TelegramSetupError("Open the bot, press Start, then use Find My Chat to select your chat ID")
     chat = await telegram_request(client, token, "getChat", {"chat_id": value.chat_id})
+    if str(chat.get("id")) == str(bot.get("id")):
+        raise TelegramSetupError("That is the bot's own ID. Open the bot and press Start to find your chat")
     if chat.get("type") != value.target_type:
         raise TelegramSetupError(
             "Choose a channel for channel delivery, or a private chat for personal delivery"

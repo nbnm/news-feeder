@@ -51,8 +51,8 @@ public struct APIClient: Sendable {
     public func saveTelegramBot(_ token: String) async throws -> TelegramConfiguration {
         try await request("/telegram/bot", method: "PUT", body: JSONSerialization.data(withJSONObject: ["bot_token": token]))
     }
-    public func connectTelegramChannel(_ channel: String) async throws -> TelegramConfiguration {
-        try await request("/telegram/config", method: "PUT", body: JSONSerialization.data(withJSONObject: ["chat_id": channel, "target_type": "channel"]))
+    public func connectTelegramDestination(_ chatID: String, type: String) async throws -> TelegramConfiguration {
+        try await request("/telegram/config", method: "PUT", body: JSONSerialization.data(withJSONObject: ["chat_id": chatID, "target_type": type]))
     }
     public func telegramTargets() async throws -> [TelegramTarget] { try await request("/telegram/targets") }
     public func publishDailyDigest() async throws -> DeliveryResult {

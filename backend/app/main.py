@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await task
         engine.dispose()
 
-    app = FastAPI(title="News Feeder", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="News Feeder", version="0.2.1", lifespan=lifespan)
     app.state.settings, app.state.sessions, app.state.service = settings, sessions, service
 
     @app.exception_handler(RequestValidationError)
@@ -391,7 +391,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         if not value.confirmed_unsent:
             raise HTTPException(
-                422, "Check that the pending post is missing from the channel before retrying"
+                422, "Check that the pending message is missing from Telegram before retrying"
             )
         async with service.lock:
             delivery = session.get(Delivery, delivery_id)
