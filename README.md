@@ -10,6 +10,8 @@ Read the agreed [design decisions](docs/design-decisions.md). This is a working 
 
 The Shiba Inu bringing a newspaper [logo](assets/branding/shiba-news-logo.png) is available as a transparent PNG and used as the app icon. Its [generation prompt](assets/branding/shiba-news-logo.prompt.txt) is saved alongside it. The original stick logo is retained as the edit reference.
 
+The Telegram bot uses the same newspaper-carrying Shiba. Its upload-ready [JPEG](assets/branding/telegram-profile.jpg) and [profile descriptions](assets/branding/telegram-profile.json) are saved alongside the app branding.
+
 ## Install as a local macOS app
 
 Run `python3 scripts/install-local-app.py` to build and install the current release in `/Applications/News Feeder.app` (or `~/Applications` if the system Applications folder is not writable). Quit the app before installing an update. Once installed, open **News Feeder** from Applications or Spotlight; no terminal, running development server, Homebrew Python, or mounted project folder is needed.
