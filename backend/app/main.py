@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await task
         engine.dispose()
 
-    app = FastAPI(title="News Feeder", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="News Feeder", version="0.2.2", lifespan=lifespan)
     app.state.settings, app.state.sessions, app.state.service = settings, sessions, service
 
     @app.exception_handler(RequestValidationError)
@@ -452,7 +452,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     [a for a in selected if a],
                     title,
                     preferences(session),
-                    channel=current.telegram_target_type == "channel",
                 ),
                 "manual:"
                 + hashlib.sha256(current.telegram_chat_id.encode()).hexdigest()[:16]

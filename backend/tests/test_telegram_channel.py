@@ -180,7 +180,7 @@ def test_generated_tldr_is_not_labeled_as_source_excerpt():
         summary={"tldr": "Generated TLDR", "why_it_matters": "Useful update"},
         summary_state="ready",
     )
-    text = "\n".join(format_articles([item], "Daily digest", channel=True))
+    text = "\n".join(message["text"] for message in format_articles([item], "Daily digest"))
     assert "Generated TLDR" in text and "Preview: source excerpt" not in text
 
 
@@ -253,8 +253,9 @@ async def test_collect_first_includes_late_discoveries_and_publishes_once_per_da
     result = await service.publish_daily()
     assert result["state"] == "sent"
     assert len([c for c in calls if c[0] == "sendMessage"]) == 1
-    posted = next(body["text"] for method, body in calls if method == "sendMessage")
-    assert "early" in posted and "late" in posted and "Source: https://example.com/late" in posted
+    posted = next(body for method, body in calls if method == "sendMessage")
+    assert "early" in posted["text"] and "late" in posted["text"]
+    assert "https://example.com/late" in [entity.get("url") for entity in posted["entities"]]
     with application.state.sessions() as session:
         daily = session.scalar(select(DailyDigest))
         from app.models import Digest

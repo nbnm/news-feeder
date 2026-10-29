@@ -125,7 +125,6 @@ class Service:
             [a for a in articles if a],
             title,
             prefs,
-            channel=current.telegram_target_type == "channel",
         )
         result = await deliver(
             session, current, messages, daily_delivery_key(timestamp, prefs, current.telegram_chat_id)

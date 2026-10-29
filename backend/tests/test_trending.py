@@ -186,8 +186,9 @@ async def test_readme_failure_keeps_description_and_telegram_evidence(tmp_path):
         assert article.content_state == "excerpt"
         assert "enterprise workflows" in article.text
         assert "README could not be fetched" in article.extraction_error
-        text = "\n".join(format_articles([article], "Daily repos"))
+        messages = format_articles([article], "Daily repos")
+        text = "\n".join(message["text"] for message in messages)
         assert "GitHub daily rank: #1" in text
         assert "Stars gained today: 0" in text
         assert "Total stars: 1,500" in text
-        assert TRENDING_URL in text
+        assert TRENDING_URL in [entity.get("url") for message in messages for entity in message["entities"]]
