@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -14,7 +15,8 @@ from app.main import create_app
 from app.models import Article, DailyDigest, Delivery, Preference, TelegramDelivery, WorkerState
 from app.schemas import Preferences
 from app.service import Service
-from app.telegram import deliver, format_articles
+from app.telegram import deliver, format_articles, poll_commands
+from app.telegram_config import recent_targets, remember_targets
 
 TOKEN = "123456789:" + "q" * 35
 CHANNEL = "-1001234567890"
@@ -195,6 +197,41 @@ def test_runner_credential_is_scoped_and_never_returned(application):
         assert client.post("/telegram/daily", json={"scheduled": False}).status_code == 403
         scheduled = client.post("/telegram/daily", json={"scheduled": True})
         assert scheduled.status_code == 200 and scheduled.json()["state"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_channel_discovery_survives_private_chat_polling(application, monkeypatch):
+    updates = [{"update_id": 21, "my_chat_member": {"chat": {"id": int(CHANNEL), "type": "channel", "title": "News"}}}]
+    settings = application.state.settings.model_copy(update={
+        "telegram_bot_token": TOKEN, "telegram_chat_id": "223344556", "telegram_target_type": "private",
+    })
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            assert "my_chat_member" in requests[-1]["allowed_updates"]
+            assert "channel_post" in requests[-1]["allowed_updates"]
+        return httpx.Response(200, json={"ok": True, "result": updates if len(requests) == 1 else []})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr("app.telegram.httpx.AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(respond), **kwargs))
+    with application.state.sessions() as session:
+        await poll_commands(session, settings)
+    with application.state.sessions() as session:
+        async with httpx.AsyncClient() as client:
+            discovered = await recent_targets(settings, session, client)
+        assert discovered == [{"id": CHANNEL, "title": "News", "type": "channel"}]
+        assert session.get(WorkerState, "telegram_offset:" + hashlib.sha256(TOKEN.encode()).hexdigest()[:16]).value == "22"
+
+
+def test_discovered_destinations_are_scoped_to_the_bot_and_removed_when_it_leaves(application):
+    event = {"channel_post": {"chat": {"id": int(CHANNEL), "title": "News", "type": "channel"}, "text": "Private message content"}}
+    with application.state.sessions() as session:
+        assert remember_targets(session, TOKEN, [event]) == [{"id": CHANNEL, "title": "News", "type": "channel"}]
+        assert remember_targets(session, "other-bot", []) == []
+        assert not any("Private message content" in record.value for record in session.scalars(select(WorkerState)))
+        assert remember_targets(session, TOKEN, [{"my_chat_member": {"chat": event["channel_post"]["chat"], "new_chat_member": {"status": "left"}}}]) == []
 
 
 def set_clock(monkeypatch, value):

@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.config import Settings
 from app.main import create_app
 from app.models import Article, Delivery, TelegramDelivery, now
+from app.schemas import Preferences
 from app.telegram import deliver, format_articles
 from app.telegram_format import MESSAGE_LIMIT, split_formatted_message, utf16_length
 
@@ -51,6 +52,32 @@ def test_news_has_bold_structure_and_literal_source_text_with_clickable_citation
     assert len(links) == 1 and links[0]["url"] == item.url
     assert entity_text(message, links[0]) == "↗ Read source"
     assert "parse_mode" not in message
+
+
+@pytest.mark.parametrize(("timestamp", "expected"), [
+    (datetime(2026, 10, 29, 18, 30, tzinfo=UTC), "29 Oct 2026 · 14:30 EDT (UTC-0400)"),
+    (datetime(2026, 11, 2, 18, 30, tzinfo=UTC), "02 Nov 2026 · 13:30 EST (UTC-0500)"),
+])
+def test_publication_timestamp_uses_profile_timezone_and_dst(timestamp, expected):
+    item = story(published_at=timestamp, discovered_at=datetime(2026, 11, 3, tzinfo=UTC))
+    message, = format_articles([item], "Feed", Preferences(timezone="America/Toronto"))
+    assert "🕒 Published: " + expected in message["text"]
+    assert "First seen" not in message["text"]
+    check_entities(message)
+
+
+def test_missing_publication_time_is_labeled_first_seen_and_naive_archive_dates_are_utc():
+    item = story(published_at=None, discovered_at=datetime(2026, 10, 29, 18, 30))
+    message, = format_articles([item], "Feed", Preferences(timezone="America/Toronto"))
+    assert "🕒 First seen: 29 Oct 2026 · 14:30 EDT (UTC-0400)" in message["text"]
+    assert "Published:" not in message["text"]
+    check_entities(message)
+
+
+def test_timestamp_respects_a_non_default_timezone_and_calendar_date():
+    item = story(published_at=datetime(2026, 10, 29, 23, 30, tzinfo=UTC))
+    message, = format_articles([item], "Feed", Preferences(timezone="Asia/Tokyo"))
+    assert "🕒 Published: 30 Oct 2026 · 08:30 JST (UTC+0900)" in message["text"]
 
 
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "tg://unsafe", "https://user:password@example.com"])

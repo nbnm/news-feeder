@@ -95,6 +95,8 @@ Daily membership and its discovery window are frozen once per local day. Manual 
 
 Telegram news uses **bold headlines**, italic source/priority lines, **⚡ TLDR** and **💡 Why it matters** sections, and a clickable **↗ Read source** link. GitHub rank, star counts, and snapshot time remain visible alongside HN engagement where available. Both private chats and channels use this layout. Digests keep complete stories together where they fit, add numbered message parts, and preserve formatting when a long story needs continuation. Formatting uses explicit Telegram entities, so source text containing HTML or Markdown remains literal. Persisted messages retain their text and formatting for retries; queued messages from older versions remain readable plain text.
 
+Each story includes **Published** with its date, time, timezone abbreviation, and UTC offset, using the digest timezone from Settings. If the source has no publication timestamp, **First seen** shows when News Feeder discovered it. Command polling retains channel membership/post metadata for discovery without storing message text, so switching from a private chat to a channel can use **Find Channels** even after the update was acknowledged. Add the bot as a channel administrator before connecting; changing the channel logo additionally needs **Change Channel Info** permission.
+
 Environment defaults `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_TARGET_TYPE` remain supported. Saved configuration takes precedence. While the collection service is running, private-chat delivery supports `/feed`, `/digest`, and `/help` only from its configured numeric chat ID; channel delivery does not poll commands. The bot's own numeric ID is rejected as a private destination.
 
 ## Hosted backend

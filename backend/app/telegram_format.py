@@ -3,8 +3,9 @@
 from bisect import bisect_left, bisect_right
 from typing import NotRequired, TypedDict
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
-from .models import Article
+from .models import Article, aware
 from .relevance import current_relevance, relevance_level
 
 MESSAGE_LIMIT = 3800
@@ -129,6 +130,13 @@ def _story(article, index, prefs):
     if relevance:
         metadata += f" · {relevance_level(relevance['score'])} priority"
     output.add(metadata, "italic")
+    timestamp = article.published_at or article.discovered_at
+    if timestamp is not None:
+        timezone = ZoneInfo(prefs.timezone if prefs else "America/Toronto")
+        local = aware(timestamp).astimezone(timezone)
+        label = "Published" if article.published_at is not None else "First seen"
+        output.add("\n")
+        output.add(f"🕒 {label}: {local:%d %b %Y · %H:%M %Z} (UTC{local:%z})", "italic")
     output.add("\n\n")
     output.add("⚡ TLDR", "bold")
     output.add("\n" + article.tldr)

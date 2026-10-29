@@ -11,6 +11,7 @@ from .config import Settings
 from .digests import build_digest, preferences
 from .models import Article, Delivery, Digest, TelegramDelivery, WorkerState, aware, now
 from .relevance import prioritized_feed
+from .telegram_config import remember_targets
 from .telegram_format import FormattedMessage
 from .telegram_format import format_articles as format_articles
 
@@ -153,11 +154,17 @@ async def poll_commands(session, settings: Settings):
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates",
-            json={"offset": offset, "timeout": 0, "allowed_updates": ["message"]},
+            json={
+                "offset": offset,
+                "timeout": 0,
+                "allowed_updates": ["message", "my_chat_member", "channel_post"],
+            },
         )
         if response.status_code != 200 or not response.json().get("ok"):
             return
-        for update in response.json()["result"]:
+        updates = response.json()["result"]
+        remember_targets(session, settings.telegram_bot_token, updates)
+        for update in updates:
             message = update.get("message", {})
             if str(message.get("chat", {}).get("id", "")) == settings.telegram_chat_id:
                 parts = message.get("text", "").split()

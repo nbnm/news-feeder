@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await task
         engine.dispose()
 
-    app = FastAPI(title="News Feeder", version="0.2.2", lifespan=lifespan)
+    app = FastAPI(title="News Feeder", version="0.2.3", lifespan=lifespan)
     app.state.settings, app.state.sessions, app.state.service = settings, sessions, service
 
     @app.exception_handler(RequestValidationError)
