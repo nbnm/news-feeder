@@ -10,7 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .digests import build_digest, preferences
 from .models import Article, Delivery, Digest, TelegramDelivery, WorkerState, aware, now
-from .relevance import current_relevance, prioritized_feed, relevance_level
+from .relevance import prioritized_feed
+from .telegram_config import remember_targets
+from .telegram_format import FormattedMessage
+from .telegram_format import format_articles as format_articles
 
 
 def split_messages(text: str, limit: int = 3800) -> list[str]:
@@ -28,51 +31,10 @@ def split_messages(text: str, limit: int = 3800) -> list[str]:
     return messages or ["No new stories in this period."]
 
 
-def format_articles(articles: list[Article], title: str, prefs=None, channel: bool = False) -> list[str]:
-    blocks = [title]
-    for index, article in enumerate(articles, 1):
-        summary = article.summary or {}
-        block = [
-            f"{index}. {article.title}",
-            article.source_name,
-            "TLDR: " + article.tldr,
-        ]
-        if article.tldr_kind != "summary":
-            block.append(
-                "Preview: headline only" if article.tldr_kind == "headline" else "Preview: source excerpt"
-            )
-        if summary.get("why_it_matters"):
-            block.append("Why it matters: " + summary["why_it_matters"])
-        relevance = current_relevance(article, prefs) if prefs else None
-        if relevance:
-            block.append(
-                f"Priority: {relevance_level(relevance['score'])}"
-                if channel
-                else f"Relevance to you: {relevance_level(relevance['score'])} · Jev assessment"
-            )
-        if article.repository:
-            repo = article.repository
-            block.append(f"GitHub daily rank: #{repo['rank']} · {repo['language'] or 'Language unspecified'}")
-            if repo["stars_today"] is not None:
-                block.append(f"Stars gained today: {repo['stars_today']:,}")
-            if repo["total_stars"] is not None:
-                block.append(f"Total stars: {repo['total_stars']:,}")
-            block.append(f"Trending snapshot: {repo['observed_at']}")
-            block.append("Trending source: " + repo["trending_url"])
-        if article.buzz:
-            buzz = article.buzz
-            block.append(f"HN buzz: {buzz['points']} points · {buzz['comments']} comments")
-        block.append("Source: " + article.url)
-        blocks.append("\n".join(block))
-    if not articles:
-        blocks.append("No new stories in this period.")
-    return split_messages("\n\n".join(blocks))
-
-
 async def deliver(
     session,
     settings: Settings,
-    messages: list[str],
+    messages: list[str | FormattedMessage],
     dedupe_key: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Delivery:
@@ -132,14 +94,20 @@ async def _send(session, settings, delivery, client):
             return delivery
         if delivery.sent_count:
             await asyncio.sleep(1.05)
+        # Old persisted deliveries contain strings. New messages retain explicit
+        # entities alongside their text, so retries preserve the original layout.
+        content = {"text": message} if isinstance(message, str) else message
+        request = {
+            "chat_id": settings.telegram_chat_id,
+            "text": content["text"],
+            "link_preview_options": {"is_disabled": True},
+        }
+        if content.get("entities"):
+            request["entities"] = content["entities"]
         try:
             response = await client.post(
                 f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
-                json={
-                    "chat_id": settings.telegram_chat_id,
-                    "text": message,
-                    "link_preview_options": {"is_disabled": True},
-                },
+                json=request,
             )
             payload = response.json()
             if not isinstance(payload, dict):
@@ -186,11 +154,17 @@ async def poll_commands(session, settings: Settings):
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates",
-            json={"offset": offset, "timeout": 0, "allowed_updates": ["message"]},
+            json={
+                "offset": offset,
+                "timeout": 0,
+                "allowed_updates": ["message", "my_chat_member", "channel_post"],
+            },
         )
         if response.status_code != 200 or not response.json().get("ok"):
             return
-        for update in response.json()["result"]:
+        updates = response.json()["result"]
+        remember_targets(session, settings.telegram_bot_token, updates)
+        for update in updates:
             message = update.get("message", {})
             if str(message.get("chat", {}).get("id", "")) == settings.telegram_chat_id:
                 parts = message.get("text", "").split()

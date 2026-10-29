@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from datetime import timedelta
@@ -227,14 +228,34 @@ async def recent_targets(settings, session, client):
             "allowed_updates": ["message", "my_chat_member", "channel_post"],
         },
     )
-    chats = {}
+    return remember_targets(session, token, updates)
+
+
+def remember_targets(session, token, updates):
+    # Persist only destination metadata before command polling acknowledges an
+    # update; channel membership events must remain discoverable afterwards.
+    key = "telegram_targets:" + hashlib.sha256(token.encode()).hexdigest()[:16]
+    record = session.get(WorkerState, key)
+    chats = {item["id"]: item for item in json.loads(record.value)} if record else {}
     for update in updates:
         event = update.get("my_chat_member") or update.get("channel_post") or update.get("message") or {}
         chat = event.get("chat", {})
         if chat.get("type") in {"channel", "private"}:
-            chats[str(chat["id"])] = {
-                "id": str(chat["id"]),
+            identifier = str(chat["id"])
+            chats.pop(identifier, None)
+            if event.get("new_chat_member", {}).get("status") in {"left", "kicked"}:
+                continue
+            chats[identifier] = {
+                "id": identifier,
                 "title": chat.get("title") or chat.get("first_name") or "Private chat",
                 "type": chat["type"],
             }
-    return list(chats.values())
+    targets = list(chats.values())[-100:]
+    value = json.dumps(targets)
+    if record is None:
+        session.add(WorkerState(key=key, value=value))
+        session.commit()
+    elif record.value != value:
+        record.value = value
+        session.commit()
+    return targets

@@ -1,6 +1,6 @@
 [project]
 name = "news-feeder-backend"
-version = "0.2.1"
+version = "0.2.3"
 description = "News Feeder collection, digest, LiteLLM, and Telegram service"
 requires-python = ">=3.12"
 dependencies = [

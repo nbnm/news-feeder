@@ -192,9 +192,9 @@ async def test_ranking_digest_telegram_and_unknown_vs_zero(application):
         assert current_relevance(low, prefs)["score"] == 0
         digest = build_digest(session)
         assert digest.article_ids == [high.id, low.id, unknown.id]
-        formatted = "".join(format_articles([high, low], "Feed", prefs))
-        assert "Relevance to you: High" in formatted
-        assert "Relevance to you: Low" in formatted
+        formatted = "".join(message["text"] for message in format_articles([high, low], "Feed", prefs))
+        assert "High priority" in formatted
+        assert "Low priority" in formatted
         assert "/100" not in formatted
         owner = session.get(Preference, "owner")
         owner.value = {**owner.value, "relevance_enabled": False}
@@ -202,7 +202,7 @@ async def test_ranking_digest_telegram_and_unknown_vs_zero(application):
         prefs = preferences(session)
         assert current_relevance(high, prefs) is None
         assert prioritized_feed(session, prefs)[0].id == unknown.id
-        assert "Relevance to you" not in "".join(format_articles([high], "Feed", prefs))
+        assert "priority" not in "".join(message["text"] for message in format_articles([high], "Feed", prefs))
 
 
 def test_profile_persists_without_overwriting_digest_settings(application):
