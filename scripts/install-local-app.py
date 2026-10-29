@@ -50,8 +50,14 @@ def install(applications_dir, support_dir):
     commands = subprocess.check_output(["ps", "-ax", "-o", "command="], text=True).splitlines()
     for app in [source, target]:
         executable = str(app / "Contents/MacOS/NewsFeeder")
-        if any(command.strip() == executable for command in commands):
-            raise RuntimeError("Quit News Feeder before installing an update")
+        helper_executable = str(app / "Contents/Resources/Backend/NewsFeederService")
+        if any(
+            command.strip() == executable or command.strip().startswith(helper_executable + " ")
+            for command in commands
+        ):
+            raise RuntimeError(
+                "Quit News Feeder and let any scheduled digest finish before installing an update"
+            )
     if target.exists():
         with (target / "Contents/Info.plist").open("rb") as stream:
             if plistlib.load(stream).get("CFBundleIdentifier") != BUNDLE_ID:

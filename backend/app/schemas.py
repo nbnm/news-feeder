@@ -259,3 +259,11 @@ class DigestOutput(BaseModel):
 class SendRequest(BaseModel):
     kind: Literal["feed", "digest"] = "digest"
     article_id: str | None = None
+
+
+class DailyPublishRequest(BaseModel):
+    scheduled: bool = False
+
+
+class TelegramRetryRequest(BaseModel):
+    confirmed_unsent: bool = False

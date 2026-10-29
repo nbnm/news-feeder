@@ -427,33 +427,162 @@ struct DigestSettings: View {
     @EnvironmentObject private var model: AppModel
     @State private var preferences = Preferences()
     @State private var topicText = ""
+    @State private var configuration: TelegramConfiguration?
+    @State private var botToken = ""
+    @State private var channel = ""
+    @State private var targets: [TelegramTarget] = []
+    @State private var confirmRetry = false
+    @State private var working = false
+    @State private var error: String?
+    @State private var notice: String?
+    @FocusState private var tokenFocused: Bool
 
     var body: some View {
         Form {
-            Section("Your digest") {
-                TextField("Interests", text: $topicText)
-                Text("Comma-separated topics influence ranking. Quiet but relevant updates can still appear.").font(.caption).foregroundStyle(.secondary)
+            Section("Telegram bot") {
+                if let configuration, !configuration.botUsername.isEmpty {
+                    LabeledContent("Bot", value: "@" + configuration.botUsername)
+                }
+                HStack {
+                    SecureField(configuration?.botTokenConfigured == true ? "Replace bot token" : "BotFather token", text: $botToken)
+                        .textFieldStyle(.roundedBorder).focused($tokenFocused)
+                        .accessibilityLabel("Telegram bot token").privacySensitive()
+                    Button("Paste") {
+                        botToken = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        tokenFocused = true
+                    }.accessibilityLabel("Paste Telegram bot token")
+                    Button("Save Bot") {
+                        perform {
+                            configuration = try await model.api.saveTelegramBot(botToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                            botToken = ""; notice = "Bot verified and saved"
+                            await model.sync()
+                        }
+                    }.disabled(botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working || !model.online)
+                }
+                Text("The token stays on your collection service and is never returned to the app. Leave the field empty to keep the saved token.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Destination channel") {
+                TextField("Channel", text: $channel, prompt: Text("@your_channel or https://t.me/your_channel"))
+                Text("Create a Telegram channel, add your bot as an administrator, and allow it to post messages. Enter the channel's own link, rather than the bot's profile. Private channels can use Find Channels after adding the bot.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Find Channels") {
+                        perform {
+                            targets = try await model.api.telegramTargets().filter { $0.type == "channel" }
+                            if targets.isEmpty { notice = "No channels found yet. Add the bot as a channel administrator, then try again." }
+                        }
+                    }.disabled(working || !model.online || configuration?.botTokenConfigured != true)
+                    Button("Verify & Connect Channel") {
+                        perform {
+                            configuration = try await model.api.connectTelegramChannel(channel.trimmingCharacters(in: .whitespacesAndNewlines))
+                            channel = configuration?.chatId ?? channel
+                            notice = "Channel verified · the bot can publish here"
+                            await model.sync()
+                        }
+                    }.disabled(working || !model.online || channel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || configuration?.botTokenConfigured != true)
+                    if working { ProgressView().controlSize(.small) }
+                }
+                if !targets.isEmpty {
+                    Picker("Discovered channels", selection: $channel) {
+                        Text("Choose a channel").tag("")
+                        ForEach(targets) { Text($0.title).tag($0.id) }
+                    }
+                }
+                if configuration?.verified == true {
+                    Label("Connected to " + (configuration?.title ?? "channel"), systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(ReaderPalette.accent)
+                }
+            }
+            Section("Daily digest") {
+                Toggle("Publish a daily digest to the channel", isOn: $preferences.telegramEnabled)
+                    .disabled(!model.online || (configuration?.verified != true && !preferences.telegramEnabled))
                 Stepper("Up to \(preferences.digestSize) stories", value: $preferences.digestSize, in: 1...20)
-                Picker("Daily delivery hour", selection: $preferences.deliveryHour) {
+                Picker("Publish daily at", selection: $preferences.deliveryHour) {
                     ForEach(0..<24) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
                 }
                 TextField("Timezone", text: $preferences.timezone)
-            }
-            Section("Telegram") {
-                Toggle("Send the daily digest to Telegram", isOn: $preferences.telegramEnabled)
-                    .disabled(model.status?.telegramConfigured != true)
-                Text("Configure a bot token and chat ID on the backend, then start the bot's chat. The bot accepts /feed, /digest, and /help from your configured chat.")
+                TextField("Digest topic interests", text: $topicText)
+                Text("Each digest includes prioritized stories, TLDRs, and source links. Daily posts are tracked to prevent duplicate publication. A missed run is checked after this Mac wakes or you log in; the Mac must be on and online.")
                     .font(.caption).foregroundStyle(.secondary)
-                if model.status?.telegramConfigured != true {
-                    Label("Telegram is awaiting backend configuration", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Save Schedule") {
+                        perform {
+                            preferences.topics = topicText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                            await model.savePreferences(preferences)
+                            configuration = try await model.api.telegramConfiguration()
+                            preferences = model.preferences
+                            notice = model.error == nil ? "Daily schedule saved" : nil
+                        }
+                    }.disabled(working || !model.online)
+                    Button("Publish Today's Digest Now") {
+                        perform {
+                            let delivery = try await model.api.publishDailyDigest()
+                            if delivery.state == "sent" { notice = "Today's digest has been published" }
+                            else { error = delivery.error ?? "Delivery status: " + delivery.state }
+                            configuration = try await model.api.telegramConfiguration()
+                            await model.sync()
+                        }
+                    }.disabled(working || !model.online || configuration?.verified != true)
+                }
+                if model.backgroundDeliveryActive {
+                    Label("Background delivery is enabled · News Feeder can be closed", systemImage: "clock.badge.checkmark")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if preferences.telegramEnabled {
+                    Text("Keep your collection service running for automatic delivery.").font(.caption).foregroundStyle(.secondary)
+                }
+                if let issue = model.backgroundDeliveryError { Text(issue).font(.caption).foregroundStyle(.orange) }
+            }
+            if let delivery = configuration?.lastDelivery {
+                Section("Latest daily delivery") {
+                    LabeledContent("Status", value: delivery.state.capitalized)
+                    LabeledContent("Posts", value: "\(delivery.sentCount) / \(delivery.totalCount)")
+                    if let issue = delivery.error { Text(issue).font(.caption).foregroundStyle(.orange) }
+                    if delivery.state == "uncertain" || delivery.state == "sending" {
+                        Text("Check the channel before posting again. An interrupted send is not automatically repeated.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if delivery.state != "sent" {
+                        Button("Retry Missing Posts…") { confirmRetry = true }.disabled(working || !model.online)
+                    }
                 }
             }
-            Button("Save Preferences") {
-                preferences.topics = topicText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                Task { await model.savePreferences(preferences) }
-            }.disabled(!model.online)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
-            if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
-        }.formStyle(.grouped).onAppear { preferences = model.preferences; topicText = preferences.topics.joined(separator: ", ") }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+        }.formStyle(.grouped)
+        .confirmationDialog("Have you checked the channel?", isPresented: $confirmRetry) {
+            Button("The pending post is missing — retry") {
+                if let delivery = configuration?.lastDelivery {
+                    perform {
+                        let result = try await model.api.retryTelegramDelivery(delivery.id)
+                        configuration = try await model.api.telegramConfiguration()
+                        if result.state == "sent" { notice = "Missing posts published" }
+                        else { error = result.error ?? "Delivery status: " + result.state }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Retry only after checking that the next pending post did not arrive. Posts already confirmed as sent will be skipped.")
+        }
+        .onAppear {
+            preferences = model.preferences
+            topicText = preferences.topics.joined(separator: ", ")
+        }
+        .task {
+            do {
+                configuration = try await model.api.telegramConfiguration()
+                channel = configuration?.chatId ?? ""
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
+        Task {
+            working = true; error = nil; notice = nil
+            do { try await operation() }
+            catch { self.error = error.localizedDescription }
+            working = false
+        }
     }
 }

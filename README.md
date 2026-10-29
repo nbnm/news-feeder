@@ -14,11 +14,11 @@ The Shiba Inu bringing a newspaper [logo](assets/branding/shiba-news-logo.png) i
 
 Run `python3 scripts/install-local-app.py` to build and install the current release in `/Applications/News Feeder.app` (or `~/Applications` if the system Applications folder is not writable). Quit the app before installing an update. Once installed, open **News Feeder** from Applications or Spotlight; no terminal, running development server, Homebrew Python, or mounted project folder is needed.
 
-The app includes an ARM64 release build and its own frozen Python collection service. The service listens on `127.0.0.1:8000`, starts when the app connects locally, and stops when the app quits. A parent watcher also stops it if the native app crashes. Remote backend connections and the development launcher remain supported. The local app uses an ad-hoc signature for this Mac; App Store distribution/notarization is not part of this installation.
+The app includes an ARM64 release build and its own frozen Python collection service. The service listens on `127.0.0.1:8000`, starts when the app connects locally, and stops when the app quits. A parent watcher also stops it if the native app crashes. Enabled daily delivery can start a temporary background service while the app is closed. Remote backend connections and the development launcher remain supported. The local app uses an ad-hoc signature for this Mac; App Store distribution/notarization is not part of this installation.
 
 Data lives in `~/Library/Application Support/NewsFeeder/`: the backend archive and gateway configuration in `service/newsfeeder.db`, the offline reading archive in the root, and service logs in `logs/service.log`. On first installation the installer imports the existing development databases using SQLite backups (including WAL contents), retaining article IDs, source/category configuration, profile, summaries, gateway settings, and read/saved flags. Later installs preserve installed data. Credentials and user data are excluded from the application bundle. An older installed app is retained under the support folder's `backups/` directory when updating; the source checkout's databases are left untouched.
 
-Build without installing using `bash scripts/build-local-app.sh`. Packaging dependencies are in the backend's `packaging` dependency group. The installer verifies the staged app signature before replacing an existing installation. No login item or background launch agent is installed.
+Build without installing using `bash scripts/build-local-app.sh`. Packaging dependencies are in the backend's `packaging` dependency group. The installer verifies the staged app signature before replacing an existing installation. Enabling verified daily Telegram delivery installs a user background job; disabling delivery removes it. Let any scheduled digest finish before installing an update.
 
 ## Development: live feed
 
@@ -82,14 +82,16 @@ Public HTTP(S) source URLs are supported; local/private network addresses are re
 
 ## Telegram
 
-1. Create a bot using [BotFather](https://t.me/BotFather), and start its chat from your Telegram account.
-2. Put `TELEGRAM_BOT_TOKEN` and your target `TELEGRAM_CHAT_ID` in `backend/.env`. Restart the backend. A numeric chat ID is recommended; owner-chat commands use numeric IDs. To find it, send `/start`, stop the worker briefly, and inspect the Bot API's `getUpdates` result locally with your token.
-3. Use Send Feed in the toolbar, Send this story in the reader, or Send Digest on the digest screen.
-4. For scheduled delivery, enable the daily digest Telegram toggle in Settings → Digest & Telegram. Configure hour and timezone there.
+1. Create a bot using [BotFather](https://t.me/BotFather). In **Settings → Digest & Telegram**, paste its token and select **Save Bot**. The service verifies and stores the token privately; it never returns it to the app or archive sync.
+2. Create a Telegram channel and add the bot as an administrator with permission to post messages. Enter the channel's own `@name`, `https://t.me/name` link, or numeric ID, then select **Verify & Connect Channel**. The bot's profile is not a destination channel. For private channels, **Find Channels** can discover the ID from a recent administrator update.
+3. Choose the hour, IANA timezone, and story count; enable **Publish a daily digest to the channel** and **Save Schedule**. **Publish Today's Digest Now** publishes the same daily edition immediately and does not repeat one already sent.
+4. Use Send Feed in the toolbar, Send this story in the reader, or Send Digest on the digest screen for additional manual posts. Daily editions contain prioritized stories, TLDRs, and source links; excerpt/headline fallbacks are labeled.
 
-The bot also handles `/feed`, `/digest`, and `/help` from the configured chat. Scheduled delivery and bot commands run on the backend while the Mac is closed. Unrecognized chats receive no archive content. Messages contain source links and are split within Telegram's limits. Delivery results are available at `/telegram/deliveries`.
+The installed app enables `~/Library/LaunchAgents/app.newsfeeder.digest.plist` only after a channel is verified and daily delivery is enabled. It checks every 15 minutes and at login, shares the app's running service or starts a temporary one, refreshes sources, and publishes after the selected local hour. News Feeder can be closed, but this Mac must be awake and online. A missed check catches up after wake/login with the current day's edition; it does not flood the channel with missed days. Hosted deployments need their backend worker running. Credentials stay in the private service database, outside the launch agent and app bundle.
 
-Delivery progress is persisted. An ambiguous network timeout or crash during a send is marked uncertain and is not automatically retried, because Telegram cannot guarantee idempotent sends. Check the chat before manually sending again. A definite rejection can be retried in a later worker cycle.
+Daily membership and its discovery window are frozen once per local day. Manual digest preparation does not shorten the next daily window. Persisted destination/date delivery keys prevent repeat posts after restarts or schedule-hour changes. Delivery receipts track acknowledged message IDs and progress; definite failures retry with backoff, including Telegram rate limits. An ambiguous network timeout or crash during a send is not automatically retried. **Retry Missing Posts** requires checking the channel first and resumes only unacknowledged posts. Delivery results are also available at `/telegram/deliveries`.
+
+Environment defaults `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_TARGET_TYPE` remain supported. Saved configuration takes precedence. Legacy private-chat setup supports `/feed`, `/digest`, and `/help` only from its configured numeric chat ID; channel delivery does not poll commands. For private delivery, start the bot from the intended Telegram account before configuring its chat ID through the API.
 
 ## Hosted backend
 

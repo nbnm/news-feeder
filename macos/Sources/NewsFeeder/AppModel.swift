@@ -52,6 +52,8 @@ final class AppModel: ObservableObject {
     @Published var online = false
     @Published var error: String?
     @Published var notice: String?
+    @Published var backgroundDeliveryActive = false
+    @Published var backgroundDeliveryError: String?
     @Published var backendURL: String
     @Published var token: String
     private var cache: FeedCache?
@@ -185,6 +187,7 @@ final class AppModel: ObservableObject {
             if preferences != currentPrefs { preferences = currentPrefs }
             try await persistPreferences(rebuildIndex: needsIndex)
             if status != newStatus { status = newStatus }
+            await configureDeliverySchedule()
             online = true; error = nil
             UserDefaults.standard.set(newStatus.demo, forKey: "demo:" + backendURL)
         } catch {
@@ -244,6 +247,7 @@ final class AppModel: ObservableObject {
             preferences = try await api.savePreferences(value)
             preferencesRevision += 1
             try await persistPreferences()
+            await configureDeliverySchedule()
             notice = "Digest preferences saved"
         } catch { self.error = error.localizedDescription }
     }
@@ -254,6 +258,14 @@ final class AppModel: ObservableObject {
         try await persistPreferences()
         notice = enabled ? "Profile saved" : "Profile saved · prioritization disabled"
         await sync()
+    }
+
+    private func configureDeliverySchedule() async {
+        do {
+            backgroundDeliveryActive = try await LocalBackend.shared.configureDailyDelivery(
+                enabled: preferences.telegramEnabled && status?.telegramBackgroundConfigured == true, baseURL: backendURL)
+            backgroundDeliveryError = nil
+        } catch { backgroundDeliveryError = error.localizedDescription }
     }
 
     private func persistPreferences(rebuildIndex: Bool = true) async throws {

@@ -1,11 +1,15 @@
+import asyncio
+import hashlib
+from datetime import timedelta
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from .config import Settings
 from .digests import build_digest, preferences
-from .models import Article, Delivery, Digest, WorkerState
+from .models import Article, Delivery, Digest, TelegramDelivery, WorkerState, aware, now
 from .relevance import current_relevance, prioritized_feed, relevance_level
 
 
@@ -24,7 +28,7 @@ def split_messages(text: str, limit: int = 3800) -> list[str]:
     return messages or ["No new stories in this period."]
 
 
-def format_articles(articles: list[Article], title: str, prefs=None) -> list[str]:
+def format_articles(articles: list[Article], title: str, prefs=None, channel: bool = False) -> list[str]:
     blocks = [title]
     for index, article in enumerate(articles, 1):
         summary = article.summary or {}
@@ -33,11 +37,19 @@ def format_articles(articles: list[Article], title: str, prefs=None) -> list[str
             article.source_name,
             "TLDR: " + article.tldr,
         ]
+        if article.tldr_kind != "summary":
+            block.append(
+                "Preview: headline only" if article.tldr_kind == "headline" else "Preview: source excerpt"
+            )
         if summary.get("why_it_matters"):
             block.append("Why it matters: " + summary["why_it_matters"])
         relevance = current_relevance(article, prefs) if prefs else None
         if relevance:
-            block.append(f"Relevance to you: {relevance_level(relevance['score'])} · Jev assessment")
+            block.append(
+                f"Priority: {relevance_level(relevance['score'])}"
+                if channel
+                else f"Relevance to you: {relevance_level(relevance['score'])} · Jev assessment"
+            )
         if article.repository:
             repo = article.repository
             block.append(f"GitHub daily rank: #{repo['rank']} · {repo['language'] or 'Language unspecified'}")
@@ -75,7 +87,24 @@ async def deliver(
     if delivery is None:
         delivery = Delivery(dedupe_key=key, total_count=len(messages), messages=messages)
         session.add(delivery)
+        try:
+            session.flush()
+            session.add(TelegramDelivery(delivery_id=delivery.id, target=settings.telegram_chat_id))
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            # Another worker claimed this daily key. Let that worker finish;
+            # never race it to publish the same digest.
+            return session.scalar(select(Delivery).where(Delivery.dedupe_key == key))
+    record = session.get(TelegramDelivery, delivery.id)
+    if record is None:
+        record = TelegramDelivery(delivery_id=delivery.id, target=settings.telegram_chat_id)
+        session.add(record)
         session.commit()
+    if record.target != settings.telegram_chat_id:
+        raise ValueError("This delivery belongs to a different Telegram destination")
+    if record.retry_at and aware(record.retry_at) > now():
+        return delivery
     if client is None:
         async with httpx.AsyncClient(timeout=20) as owned_client:
             return await _send(session, settings, delivery, owned_client)
@@ -83,10 +112,26 @@ async def deliver(
 
 
 async def _send(session, settings, delivery, client):
+    record = session.get(TelegramDelivery, delivery.id)
     for message in delivery.messages[delivery.sent_count :]:
         # Persist before sending. A restart in this state is ambiguous and must not blindly resend.
-        delivery.state, delivery.error = "sending", None
+        claimed = session.execute(
+            update(Delivery)
+            .where(
+                Delivery.id == delivery.id,
+                Delivery.state.in_(["pending", "failed"]),
+                Delivery.sent_count == delivery.sent_count,
+            )
+            .values(state="sending", error=None)
+        )
+        if claimed.rowcount == 1:
+            record.attempted_at = now()
         session.commit()
+        if claimed.rowcount != 1:
+            session.refresh(delivery)
+            return delivery
+        if delivery.sent_count:
+            await asyncio.sleep(1.05)
         try:
             response = await client.post(
                 f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
@@ -97,6 +142,14 @@ async def _send(session, settings, delivery, client):
                 },
             )
             payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid Telegram response")
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+            delivery.state = "failed"
+            delivery.error = "Could not connect to Telegram. Delivery will be retried."
+            record.retry_at = now() + timedelta(minutes=1)
+            session.commit()
+            return delivery
         except Exception:
             delivery.state = "uncertain"
             delivery.error = "Delivery outcome unknown. Check the Telegram chat before sending again."
@@ -104,11 +157,20 @@ async def _send(session, settings, delivery, client):
             return delivery
         if not payload.get("ok"):
             delivery.state = "failed"
+            wait = payload.get("parameters", {}).get("retry_after", 900)
+            wait = min(max(wait, 1), 86400) if isinstance(wait, int) else 900
+            record.retry_at = now() + timedelta(seconds=wait)
             delivery.error = (
-                f"Telegram rejected the message (HTTP {response.status_code}). Check bot/chat setup."
+                f"Telegram rejected this post (HTTP {response.status_code}). "
+                "Check bot permissions; retry is scheduled."
             )
             session.commit()
             return delivery
+        record.retry_at = None
+        result = payload.get("result")
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        if message_id is not None:
+            record.message_ids = [*record.message_ids, message_id]
         delivery.sent_count += 1
         delivery.state = "sent" if delivery.sent_count == delivery.total_count else "pending"
         session.commit()
@@ -116,9 +178,10 @@ async def _send(session, settings, delivery, client):
 
 
 async def poll_commands(session, settings: Settings):
-    if not settings.telegram_ready:
+    if not settings.telegram_ready or settings.telegram_target_type == "channel":
         return
-    state = session.get(WorkerState, "telegram_offset")
+    bot_key = hashlib.sha256(settings.telegram_bot_token.encode()).hexdigest()[:16]
+    state = session.get(WorkerState, "telegram_offset:" + bot_key)
     offset = int(state.value) if state else 0
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
@@ -151,9 +214,9 @@ async def poll_commands(session, settings: Settings):
                     messages = [
                         "News Feeder\n/feed — latest stories\n/digest — latest digest\n/help — commands"
                     ]
-                await deliver(session, settings, messages, f"command:{update['update_id']}", client)
+                await deliver(session, settings, messages, f"command:{bot_key}:{update['update_id']}", client)
             if state is None:
-                state = WorkerState(key="telegram_offset", value="0")
+                state = WorkerState(key="telegram_offset:" + bot_key, value="0")
                 session.add(state)
             state.value = str(update["update_id"] + 1)
             session.commit()

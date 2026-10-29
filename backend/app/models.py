@@ -171,6 +171,22 @@ class Delivery(Base):
     total_count: Mapped[int] = mapped_column(Integer)
     messages: Mapped[list] = mapped_column(JSON)
     error: Mapped[str | None] = mapped_column(Text)
+    telegram_record: Mapped["TelegramDelivery | None"] = relationship(lazy="selectin", uselist=False)
+
+
+class DailyDigest(Base):
+    __tablename__ = "daily_digests"
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    digest_id: Mapped[str] = mapped_column(ForeignKey("digests.id"))
+
+
+class TelegramDelivery(Base):
+    __tablename__ = "telegram_delivery_metadata"
+    delivery_id: Mapped[str] = mapped_column(ForeignKey("deliveries.id"), primary_key=True)
+    target: Mapped[str] = mapped_column(String(100))
+    message_ids: Mapped[list] = mapped_column(JSON, default=list)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class WorkerState(Base):

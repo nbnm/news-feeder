@@ -40,6 +40,11 @@ struct CacheChecks {
          "tldr_kind":"source_excerpt","buzz":null}
         """
         let article = try makeDecoder().decode(Article.self, from: Data(fixture.utf8))
+        let telegram = try makeDecoder().decode(TelegramConfiguration.self, from: Data(#"{"configured":true,"bot_token_configured":true,"chat_id":"-1001234","target_type":"channel","title":"News","bot_username":"example_news_bot","verified":true,"daily_enabled":true,"next_delivery_at":"2026-10-30T12:00:00+00:00","last_delivery":{"id":"delivery-one","state":"sent","sent_count":2,"total_count":2,"error":null,"created_at":"2026-10-29T12:00:00+00:00"}}"#.utf8))
+        guard telegram.verified, telegram.chatId == "-1001234", telegram.lastDelivery?.sentCount == 2,
+              telegram.lastDelivery?.id == "delivery-one" else {
+            fatalError("Telegram channel configuration and delivery receipts did not decode")
+        }
         guard article.previewText == "A real story preview.", article.previewLabel.contains("Source excerpt") else {
             fatalError("Article TLDR did not decode")
         }

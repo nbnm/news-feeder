@@ -19,7 +19,7 @@ public struct APIClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
-        request.timeoutInterval = 120
+        request.timeoutInterval = path == "/telegram/daily" ? 660 : 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let requestID { request.setValue(requestID, forHTTPHeaderField: "X-Request-ID") }
@@ -27,7 +27,9 @@ public struct APIClient: Sendable {
         guard let response = response as? HTTPURLResponse else { throw APIError(message: "No backend response.") }
         guard (200..<300).contains(response.statusCode) else {
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let message = object?["detail"] as? String ?? "Backend returned HTTP \(response.statusCode)."
+            let validation = (object?["detail"] as? [[String: Any]])?.prefix(3)
+                .compactMap { $0["msg"] as? String }.joined(separator: " · ")
+            let message = object?["detail"] as? String ?? validation ?? "Backend returned HTTP \(response.statusCode)."
             throw APIError(message: message)
         }
         do { return try makeDecoder().decode(T.self, from: data) }
@@ -45,6 +47,21 @@ public struct APIClient: Sendable {
         let _: [String: Bool] = try await request("/categories/\(category.id)", method: "DELETE")
     }
     public func status() async throws -> BackendStatus { try await request("/status") }
+    public func telegramConfiguration() async throws -> TelegramConfiguration { try await request("/telegram/config") }
+    public func saveTelegramBot(_ token: String) async throws -> TelegramConfiguration {
+        try await request("/telegram/bot", method: "PUT", body: JSONSerialization.data(withJSONObject: ["bot_token": token]))
+    }
+    public func connectTelegramChannel(_ channel: String) async throws -> TelegramConfiguration {
+        try await request("/telegram/config", method: "PUT", body: JSONSerialization.data(withJSONObject: ["chat_id": channel, "target_type": "channel"]))
+    }
+    public func telegramTargets() async throws -> [TelegramTarget] { try await request("/telegram/targets") }
+    public func publishDailyDigest() async throws -> DeliveryResult {
+        try await request("/telegram/daily", method: "POST", body: JSONSerialization.data(withJSONObject: ["scheduled": false]))
+    }
+    public func retryTelegramDelivery(_ id: String) async throws -> DeliveryResult {
+        try await request("/telegram/deliveries/\(id)/retry", method: "POST",
+                          body: JSONSerialization.data(withJSONObject: ["confirmed_unsent": true]))
+    }
     public func gatewayConfiguration() async throws -> GatewayConfiguration { try await request("/llm/config") }
     public func gatewayModels() async throws -> GatewayCatalog { try await request("/llm/models") }
     public func configureGateway(model: String? = nil, apiKey: String? = nil) async throws -> GatewayConfiguration {

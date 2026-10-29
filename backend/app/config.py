@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     litellm_model: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_target_type: str = ""
 
     @property
     def llm_ready(self) -> bool:

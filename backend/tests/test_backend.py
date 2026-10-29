@@ -329,6 +329,10 @@ def test_production_requires_auth():
 async def test_daily_delivery_survives_worker_restart(application, monkeypatch):
     from app.models import Preference
 
+    timestamp = datetime(2026, 10, 29, 13, tzinfo=UTC)
+    monkeypatch.setattr("app.service.now", lambda: timestamp)
+    monkeypatch.setattr("app.digests.now", lambda: timestamp)
+
     settings = Settings(telegram_bot_token="token", telegram_chat_id="123")
     sends = []
     original = httpx.AsyncClient

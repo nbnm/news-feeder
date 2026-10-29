@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from .collectors import matches_topics
-from .models import Article, Digest, Preference, aware, now
+from .models import Article, DailyDigest, Digest, Preference, aware, now
 from .relevance import article_output, current_relevance
 from .schemas import DigestOutput, Preferences
 
@@ -21,7 +21,7 @@ def cutoff_at(timestamp: datetime, prefs: Preferences) -> datetime:
     return aware(cutoff)
 
 
-def build_digest(session, cutoff: datetime | None = None) -> Digest:
+def build_digest(session, cutoff: datetime | None = None, *, start_at=None, commit=True) -> Digest:
     prefs = preferences(session)
     end = aware(cutoff or now())
     existing = session.scalar(select(Digest).where(Digest.end_at == end))
@@ -30,7 +30,7 @@ def build_digest(session, cutoff: datetime | None = None) -> Digest:
     previous = session.scalar(
         select(Digest).where(Digest.end_at < end).order_by(Digest.end_at.desc()).limit(1)
     )
-    start = (
+    start = start_at or (
         aware(previous.end_at)
         if previous
         else aware(end.astimezone(ZoneInfo(prefs.timezone)) - timedelta(days=1))
@@ -56,8 +56,43 @@ def build_digest(session, cutoff: datetime | None = None) -> Digest:
     articles.sort(key=rank, reverse=True)
     digest = Digest(start_at=start, end_at=end, article_ids=[a.id for a in articles[: prefs.digest_size]])
     session.add(digest)
+    session.commit() if commit else session.flush()
+    return digest
+
+
+def daily_due(timestamp, prefs):
+    local = aware(timestamp).astimezone(ZoneInfo(prefs.timezone))
+    return local.hour >= prefs.delivery_hour
+
+
+def prepare_daily_digest(session, timestamp=None):
+    prefs = preferences(session)
+    timestamp = aware(timestamp or now())
+    local = timestamp.astimezone(ZoneInfo(prefs.timezone))
+    key = local.date().isoformat() + "|" + prefs.timezone
+    existing = session.get(DailyDigest, key)
+    if existing:
+        return session.get(Digest, existing.digest_id)
+    previous = session.scalar(
+        select(Digest)
+        .join(DailyDigest, DailyDigest.digest_id == Digest.id)
+        .where(Digest.end_at < timestamp)
+        .order_by(Digest.end_at.desc())
+        .limit(1)
+    )
+    start = aware(previous.end_at) if previous else aware(local - timedelta(days=1))
+    digest = build_digest(session, timestamp, start_at=start, commit=False)
+    session.add(DailyDigest(key=key, digest_id=digest.id))
     session.commit()
     return digest
+
+
+def daily_delivery_key(timestamp, prefs, target):
+    import hashlib
+
+    date = aware(timestamp).astimezone(ZoneInfo(prefs.timezone)).date().isoformat()
+    destination = hashlib.sha256(target.encode()).hexdigest()[:24]
+    return f"daily:{destination}:{date}"
 
 
 def digest_output(session, digest: Digest) -> DigestOutput:

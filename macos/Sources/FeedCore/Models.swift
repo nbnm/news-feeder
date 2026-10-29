@@ -199,6 +199,37 @@ public struct BackendStatus: Codable, Sendable, Equatable {
     public let ranking: Bool?
     public let jevConfigured: Bool?
     public let jevModel: String?
+    public let telegramBackgroundConfigured: Bool?
+    public let telegramTargetType: String?
+    public let instanceId: String?
+}
+
+public struct TelegramConfiguration: Codable, Sendable {
+    public let configured: Bool
+    public let botTokenConfigured: Bool
+    public let chatId: String
+    public let targetType: String
+    public let title: String
+    public let botUsername: String
+    public let verified: Bool
+    public let dailyEnabled: Bool
+    public let nextDeliveryAt: String?
+    public let lastDelivery: TelegramDeliveryStatus?
+}
+
+public struct TelegramDeliveryStatus: Codable, Sendable {
+    public let id: String
+    public let state: String
+    public let sentCount: Int
+    public let totalCount: Int
+    public let error: String?
+    public let createdAt: String
+}
+
+public struct TelegramTarget: Codable, Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let type: String
 }
 
 public struct GatewayConfiguration: Codable, Sendable, Equatable {
