@@ -1,16 +1,42 @@
+import hashlib
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from .collectors import matches_topics
-from .models import Article, DailyDigest, Digest, Preference, aware, now
-from .relevance import article_output, current_relevance
+from .curation import include_in_news
+from .models import Article, DailyDigest, Digest, DigestSelection, Preference, aware, now
+from .relevance import article_output, priority_key
 from .schemas import DigestOutput, Preferences
 
 
 def preferences(session) -> Preferences:
     return Preferences.model_validate(session.get(Preference, "owner").value)
+
+
+def selection_fingerprint(prefs):
+    fields = {
+        key: getattr(prefs, key)
+        for key in (
+            "news_focus",
+            "major_github_only",
+            "digest_size",
+            "topics",
+            "profile_hash",
+            "relevance_enabled",
+        )
+    }
+    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+
+
+def current_digest(session):
+    """Keep sent editions intact; prepare a new edition when the reader changes their mix."""
+    latest = session.scalar(select(Digest).order_by(Digest.end_at.desc()).limit(1))
+    signature = selection_fingerprint(preferences(session))
+    if latest and latest.selection and latest.selection.preferences_hash == signature:
+        return latest
+    return build_digest(session, start_at=aware(latest.start_at) if latest else None)
 
 
 def cutoff_at(timestamp: datetime, prefs: Preferences) -> datetime:
@@ -37,24 +63,16 @@ def build_digest(session, cutoff: datetime | None = None, *, start_at=None, comm
     )
     # Include late discoveries; do not drop articles because their publisher timestamp was earlier.
     articles = list(
-        session.scalars(select(Article).where(Article.discovered_at > start, Article.discovered_at <= end))
-    )
-
-    def rank(article):
-        summary = article.summary or {}
-        relevant = matches_topics(article.title + " " + " ".join(summary.get("topics", [])), prefs.topics)
-        impact = {"high": 3, "medium": 2, "low": 1}.get(summary.get("impact"), 0)
-        assessment = current_relevance(article, prefs)
-        return (
-            assessment is not None,
-            assessment["score"] if assessment else 0,
-            relevant,
-            impact,
-            aware(article.discovered_at),
+        session.scalars(
+            select(Article)
+            .where(Article.discovered_at > start, Article.discovered_at <= end)
+            .order_by(Article.id)
         )
-
-    articles.sort(key=rank, reverse=True)
+    )
+    articles = [a for a in articles if include_in_news(a, prefs)]
+    articles.sort(key=lambda a: priority_key(a, prefs), reverse=True)
     digest = Digest(start_at=start, end_at=end, article_ids=[a.id for a in articles[: prefs.digest_size]])
+    digest.selection = DigestSelection(preferences_hash=selection_fingerprint(prefs))
     session.add(digest)
     session.commit() if commit else session.flush()
     return digest
@@ -65,14 +83,22 @@ def daily_due(timestamp, prefs):
     return local.hour >= prefs.delivery_hour
 
 
-def prepare_daily_digest(session, timestamp=None):
+def prepare_daily_digest(session, timestamp=None, *, refresh_selection=False):
     prefs = preferences(session)
     timestamp = aware(timestamp or now())
     local = timestamp.astimezone(ZoneInfo(prefs.timezone))
     key = local.date().isoformat() + "|" + prefs.timezone
     existing = session.get(DailyDigest, key)
     if existing:
-        return session.get(Digest, existing.digest_id)
+        digest = session.get(Digest, existing.digest_id)
+        if not refresh_selection or (
+            digest.selection and digest.selection.preferences_hash == selection_fingerprint(prefs)
+        ):
+            return digest
+        updated = build_digest(session, timestamp, start_at=aware(digest.start_at), commit=False)
+        existing.digest_id = updated.id
+        session.commit()
+        return updated
     previous = session.scalar(
         select(Digest)
         .join(DailyDigest, DailyDigest.digest_id == Digest.id)

@@ -8,8 +8,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from .config import Settings
-from .digests import build_digest, preferences
-from .models import Article, Delivery, Digest, TelegramDelivery, WorkerState, aware, now
+from .digests import current_digest, preferences
+from .models import Article, Delivery, TelegramDelivery, WorkerState, aware, now
 from .relevance import prioritized_feed
 from .telegram_config import remember_targets
 from .telegram_format import FormattedMessage
@@ -175,9 +175,7 @@ async def poll_commands(session, settings: Settings):
                         articles, "News Feeder · Prioritized stories", preferences(session)
                     )
                 elif command == "/digest":
-                    digest = session.scalar(
-                        select(Digest).order_by(Digest.end_at.desc()).limit(1)
-                    ) or build_digest(session)
+                    digest = current_digest(session)
                     articles = [session.get(Article, article_id) for article_id in digest.article_ids]
                     messages = format_articles(
                         [article for article in articles if article],

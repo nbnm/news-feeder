@@ -165,8 +165,6 @@ def _story(article, index, prefs):
         output.add("\nTrending snapshot: " + repo["observed_at"], "italic")
         output.add("\n")
         _link(output, "↗ Trending list", repo["trending_url"])
-    if article.buzz:
-        output.add(f"\n\n💬 HN buzz: {article.buzz['points']} points · {article.buzz['comments']} comments")
     output.add("\n\n")
     _link(output, "↗ Read source", article.url)
     return output.finish()

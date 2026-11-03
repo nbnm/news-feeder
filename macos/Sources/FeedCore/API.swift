@@ -92,6 +92,10 @@ public struct APIClient: Sendable {
     public func savePreferences(_ preferences: Preferences) async throws -> Preferences {
         try await request("/preferences", method: "PUT", body: makeEncoder().encode(preferences))
     }
+    public func saveNewsMix(focus: Int, majorGithubOnly: Bool) async throws -> Preferences {
+        let body: [String: Any] = ["news_focus": focus, "major_github_only": majorGithubOnly]
+        return try await request("/news-mix", method: "PUT", body: JSONSerialization.data(withJSONObject: body))
+    }
     public func saveProfile(_ profile: String, enabled: Bool) async throws -> Preferences {
         let body: [String: Any] = ["profile": profile, "relevance_enabled": enabled]
         return try await request("/profile", method: "PUT", body: JSONSerialization.data(withJSONObject: body))

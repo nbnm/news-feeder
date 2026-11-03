@@ -159,6 +159,13 @@ class Digest(Base):
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), unique=True)
     article_ids: Mapped[list] = mapped_column(JSON)
+    selection: Mapped["DigestSelection | None"] = relationship(lazy="selectin", uselist=False)
+
+
+class DigestSelection(Base):
+    __tablename__ = "digest_selection"
+    digest_id: Mapped[str] = mapped_column(ForeignKey("digests.id"), primary_key=True)
+    preferences_hash: Mapped[str] = mapped_column(String(64))
 
 
 class Delivery(Base):

@@ -179,6 +179,12 @@ class RelevanceOutput(RelevanceScore):
     evidence: Literal["summary", "source_excerpt", "headline"]
 
 
+class ArticleCuration(BaseModel):
+    data_engineering: float = Field(ge=0, le=1)
+    agentic_ai: float = Field(ge=0, le=1)
+    github_update: Literal["none", "repository", "major", "routine"]
+
+
 class ArticleOutput(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -202,6 +208,7 @@ class ArticleOutput(BaseModel):
     relevance_state: str = "pending"
     relevance_error: str | None = None
     repository: RepositoryMetadata | None = None
+    curation: ArticleCuration | None = None
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -231,7 +238,12 @@ class ReaderProfile(BaseModel):
         return profile_fingerprint(self.profile)
 
 
-class Preferences(ReaderProfile):
+class NewsMix(BaseModel):
+    news_focus: int = Field(default=50, ge=0, le=100, strict=True)
+    major_github_only: bool = True
+
+
+class Preferences(ReaderProfile, NewsMix):
     topics: list[str] = Field(default_factory=list, max_length=30)
     digest_size: int = Field(default=8, ge=1, le=20)
     delivery_hour: int = Field(default=8, ge=0, le=23)

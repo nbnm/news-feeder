@@ -12,6 +12,7 @@ struct ReaderView: View {
     @State private var search = ""
     @State private var showSummary = true
     @State private var showReadingControls = false
+    @State private var showNewsMix = false
     @AppStorage("feedSort") private var feedSort = "priority"
 
     private var trendingSource: FeedSource? {
@@ -143,6 +144,14 @@ struct ReaderView: View {
         .tint(ink)
         .toolbar {
             ToolbarItemGroup {
+                Button { showNewsMix.toggle() } label: { Label("News Mix", systemImage: "slider.horizontal.3") }
+                    .help("Balance data engineering and agentic AI; filter routine GitHub updates")
+                    .popover(isPresented: $showNewsMix, arrowEdge: .top) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Your news mix").font(.headline)
+                            NewsMixControls()
+                        }.padding(20).frame(width: 410)
+                    }
                 Button { showReadingControls.toggle() } label: { Label("Reading Appearance", systemImage: "textformat.size") }
                     .help("Change font, text size, and theme")
                     .popover(isPresented: $showReadingControls, arrowEdge: .top) {

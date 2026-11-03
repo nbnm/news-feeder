@@ -67,6 +67,16 @@ public struct Relevance: Codable, Sendable, Equatable {
     public var level: RelevanceLevel { RelevanceLevel(score: score) }
 }
 
+public struct ArticleCuration: Codable, Sendable, Equatable {
+    public let dataEngineering: Double
+    public let agenticAi: Double
+    public let githubUpdate: String
+
+    public func focusAdjustment(for preferences: Preferences) -> Double {
+        Double(preferences.effectiveNewsFocus - 50) * 2 * (agenticAi - dataEngineering)
+    }
+}
+
 public struct Article: Codable, Identifiable, Sendable, Equatable {
     public let id: String
     public let sourceId: String
@@ -89,6 +99,7 @@ public struct Article: Codable, Identifiable, Sendable, Equatable {
     public let relevanceState: String?
     public let relevanceError: String?
     public let repository: RepositoryMetadata?
+    public let curation: ArticleCuration?
     public var isRead = false
     public var isSaved = false
 
@@ -96,7 +107,7 @@ public struct Article: Codable, Identifiable, Sendable, Equatable {
         case id, sourceId, sourceIds, sourceName, title, url, publishedAt, discoveredAt, text, contentState
         case extractionError, summary, summaryState, summaryError, tldr, tldrKind, buzz
         case relevance, relevanceState, relevanceError
-        case repository
+        case repository, curation
     }
 
     public var displayTitle: String { repository?.fullName ?? title }
@@ -187,6 +198,10 @@ public struct Preferences: Codable, Sendable, Equatable {
     public var profile: String?
     public var relevanceEnabled: Bool?
     public var profileHash: String?
+    public var newsFocus: Int?
+    public var majorGithubOnly: Bool?
+    public var effectiveNewsFocus: Int { min(100, max(0, newsFocus ?? 50)) }
+    public var effectiveMajorGithubOnly: Bool { majorGithubOnly ?? true }
     public init() {}
 }
 
