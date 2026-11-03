@@ -17,7 +17,7 @@ from . import telegram_config
 from .collectors import collect
 from .config import Settings
 from .database import database
-from .digests import build_digest, digest_output, preferences
+from .digests import build_digest, current_digest, digest_output, preferences
 from .gateway import (
     GatewayError,
     GatewayUpdate,
@@ -48,6 +48,7 @@ from .schemas import (
     CategoryOutput,
     DailyPublishRequest,
     DigestOutput,
+    NewsMix,
     Preferences,
     ReaderProfile,
     SendRequest,
@@ -88,7 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await task
         engine.dispose()
 
-    app = FastAPI(title="News Feeder", version="0.2.3", lifespan=lifespan)
+    app = FastAPI(title="News Feeder", version="0.2.5", lifespan=lifespan)
     app.state.settings, app.state.sessions, app.state.service = settings, sessions, service
 
     @app.exception_handler(RequestValidationError)
@@ -321,9 +322,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owner = session.get(Preference, "owner")
         owner.value = {
             **owner.value,
-            **value.model_dump(exclude={"profile", "relevance_enabled", "profile_hash"}),
+            **value.model_dump(
+                exclude={"profile", "relevance_enabled", "profile_hash", "news_focus", "major_github_only"}
+            ),
         }
         session.commit()
+        return preferences(session)
+
+    @app.put("/news-mix", response_model=Preferences, dependencies=protected)
+    def save_news_mix(value: NewsMix, session=Depends(session_dependency)):
+        owner = session.get(Preference, "owner")
+        owner.value = {**owner.value, **value.model_dump()}
+        session.commit()
+        if session.scalar(select(Digest.id).limit(1)):
+            current_digest(session)
         return preferences(session)
 
     @app.put("/profile", response_model=Preferences, dependencies=protected)
@@ -438,8 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     raise HTTPException(404, "Article not found")
                 selected, title = [article], "News Feeder · Saved story"
             elif value.kind == "digest":
-                digest = session.scalar(select(Digest).order_by(Digest.end_at.desc()).limit(1))
-                digest = digest or build_digest(session)
+                digest = current_digest(session)
                 selected = [session.get(Article, article_id) for article_id in digest.article_ids]
                 title = "News Feeder · Daily digest"
             else:

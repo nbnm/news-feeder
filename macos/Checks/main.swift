@@ -53,6 +53,9 @@ struct CacheChecks {
         guard archivedPreferences.profile == nil, article.relevance == nil else {
             fatalError("Existing archives must remain readable")
         }
+        guard archivedPreferences.effectiveNewsFocus == 50, archivedPreferences.effectiveMajorGithubOnly else {
+            fatalError("Existing archives need balanced news and major GitHub updates by default")
+        }
         var object = try JSONSerialization.jsonObject(with: Data(fixture.utf8)) as! [String: Any]
         object["relevance"] = ["score": 82.5, "confidence": 0.7, "topics": [
             ["topic": "APIs", "score": 90.0, "confidence": 0.8]], "model": "jev-1.13.0",
@@ -210,6 +213,48 @@ struct CacheChecks {
               try reopened.articles().first(where: { $0.id == "shared" })?.sourceIds == ["community", "labs"] else {
             fatalError("Categories, assignments, release filters, and membership must remain available offline")
         }
+        func mixStory(id: String, data: Double, agents: Double, github: String = "none",
+                      timestamp: String = "2026-10-01T12:00:00Z") throws -> Article {
+            var news = try JSONSerialization.jsonObject(with: Data(fixture.utf8)) as! [String: Any]
+            news["id"] = id; news["discovered_at"] = timestamp
+            news["curation"] = ["data_engineering": data, "agentic_ai": agents, "github_update": github]
+            return try makeDecoder().decode(Article.self, from: JSONSerialization.data(withJSONObject: news))
+        }
+        let dataStory = try mixStory(id: "data", data: 1, agents: 0)
+        let agentStory = try mixStory(id: "agents", data: 0, agents: 1, timestamp: "2026-10-02T12:00:00Z")
+        var routineStory = try mixStory(id: "routine", data: 1, agents: 0, github: "routine")
+        routineStory.isSaved = true
+        let newRepo = try mixStory(id: "repo", data: 0, agents: 0.35, github: "repository")
+        let importantRelease = try mixStory(id: "major", data: 0.75, agents: 0, github: "major")
+        let mixStories = [dataStory, agentStory, routineStory, newRepo, importantRelease]
+        let mixByID = Dictionary(uniqueKeysWithValues: mixStories.map { ($0.id, $0) })
+        var mixPrefs = Preferences()
+        mixPrefs.newsFocus = 0
+        let dataIndex = FeedIndex(articles: mixStories, preferences: mixPrefs)
+        guard dataIndex.articles(in: "all", byID: mixByID, sources: []).first?.id == "data",
+              dataIndex.articles(in: "all", byID: mixByID, sources: []).count == 4,
+              dataIndex.articles(in: "all", byID: mixByID, sources: [], sort: "latest").first?.id == "agents",
+              dataIndex.articles(in: "saved", byID: mixByID, sources: []).map(\.id) == ["routine"] else {
+            fatalError("Data focus, latest chronology, major release filtering, or Saved access failed")
+        }
+        mixPrefs.newsFocus = 100
+        let agentIndex = FeedIndex(articles: mixStories, preferences: mixPrefs)
+        guard agentIndex.articles(in: "all", byID: mixByID, sources: []).first?.id == "agents" else {
+            fatalError("Agentic focus must reverse the mix without a relevance model or gateway")
+        }
+        mixPrefs.majorGithubOnly = false
+        let unfilteredIndex = FeedIndex(articles: mixStories, preferences: mixPrefs)
+        guard unfilteredIndex.articles(in: "all", byID: mixByID, sources: []).count == 5 else {
+            fatalError("Disabling major-only filtering must restore routine releases")
+        }
+        try cache.store(mixPrefs, named: "preferences")
+        try cache.merge(mixStories)
+        guard let restoredMix = try reopened.load(Preferences.self, named: "preferences"),
+              restoredMix.effectiveNewsFocus == 100, !restoredMix.effectiveMajorGithubOnly,
+              try reopened.articles().first(where: { $0.id == "data" })?.curation?.dataEngineering == 1 else {
+            fatalError("News mix and curation signals must persist for offline reading")
+        }
+        print("Passed: news mix endpoints, chronological browsing, major GitHub filtering, Saved access, and offline curation")
         print("Passed: category and source views, shared provenance, cached search/order, immediate reading flags, and offline category configuration")
         print("Passed: GitHub Trending metadata, order, membership, search, and offline persistence")
         print("Passed: gateway and Jev decoding, stale-score invalidation, offline profile/scores, source snapshots, deduplication, reading-state merge, and unchanged sync performs no database writes")

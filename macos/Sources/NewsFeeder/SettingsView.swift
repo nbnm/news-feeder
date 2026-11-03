@@ -25,6 +25,7 @@ struct ProfileSettings: View {
 
     var body: some View {
         Form {
+            Section("News mix") { NewsMixControls() }
             Section("Your news profile") {
                 Text("Describe your work, interests, tools, and what deserves your attention. Be specific about releases and topics you want to follow or avoid.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -66,6 +67,77 @@ struct ProfileSettings: View {
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
         }.formStyle(.grouped)
             .onAppear { profile = model.preferences.profile ?? ""; enabled = model.preferences.relevanceEnabled ?? true }
+    }
+}
+
+struct NewsMixControls: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var focus = 50.0
+    @State private var majorGithubOnly = true
+    @State private var working = false
+    @State private var error: String?
+    @State private var saved = false
+
+    private var hasChanges: Bool {
+        Int(focus) != model.preferences.effectiveNewsFocus
+            || majorGithubOnly != model.preferences.effectiveMajorGithubOnly
+    }
+
+    private var description: String {
+        if focus == 50 { return "Balanced" }
+        return focus < 50 ? "More data engineering" : "More agentic AI"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(description).font(.subheadline.weight(.medium))
+                Spacer()
+                Button("Balance") { focus = 50 }.buttonStyle(.borderless).disabled(focus == 50 || working)
+            }
+            Slider(value: $focus, in: 0...100, step: 5) {
+                Text("News mix")
+            } minimumValueLabel: {
+                Text("Data engineering").font(.caption)
+            } maximumValueLabel: {
+                Text("Agentic AI").font(.caption)
+            }
+            .labelsHidden()
+            .accessibilityLabel("News mix")
+            .accessibilityValue("\(Int(focus)) out of 100. \(description)")
+            .disabled(working)
+            Toggle("Major GitHub updates only", isOn: $majorGithubOnly).disabled(working)
+            Text("Keep new repositories, substantial features, breaking changes, and critical fixes. Hide routine releases, dependency bumps, and documentation changes.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Applies to your feed, new digests, and Telegram posts. Latest stays chronological; saved stories remain available.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(working ? "Applying…" : "Apply News Mix") {
+                    Task {
+                        working = true; error = nil; saved = false
+                        do {
+                            try await model.saveNewsMix(focus: Int(focus), majorGithubOnly: majorGithubOnly)
+                            saved = true
+                        } catch { self.error = error.localizedDescription }
+                        working = false
+                    }
+                }.buttonStyle(.borderedProminent).disabled(working || !model.online || !hasChanges)
+                if working { ProgressView().controlSize(.small) }
+                if saved && !hasChanges { Label("Applied", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary) }
+            }
+            if !model.online { Text("Connect to apply your news mix.").font(.caption).foregroundStyle(.secondary) }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+        .onAppear { load() }
+        .onChange(of: model.preferences) { previous, _ in
+            if Int(focus) == previous.effectiveNewsFocus
+                && majorGithubOnly == previous.effectiveMajorGithubOnly { load() }
+        }
+    }
+
+    private func load() {
+        focus = Double(model.preferences.effectiveNewsFocus)
+        majorGithubOnly = model.preferences.effectiveMajorGithubOnly
     }
 }
 

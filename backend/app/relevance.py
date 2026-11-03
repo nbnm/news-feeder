@@ -9,9 +9,11 @@ import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from .collectors import matches_topics
+from .curation import curation_signals, focus_adjustment, include_in_news
 from .models import Article, Preference, Relevance, aware, now
 from .profile import JEV_MODEL
-from .schemas import ArticleOutput, Preferences, RelevanceOutput, TopicRelevance
+from .schemas import ArticleCuration, ArticleOutput, Preferences, RelevanceOutput, TopicRelevance
 
 CRITERIA = [
     "Outside the reader's stated interests and priorities.",
@@ -80,24 +82,29 @@ def article_output(article, prefs):
             else None,
             "relevance_state": state,
             "relevance_error": record.error if record else None,
+            "curation": ArticleCuration.model_validate(curation_signals(article)),
         }
     )
 
 
 def priority_key(article, prefs):
     relevance = current_relevance(article, prefs)
-    # Unknown is distinct from zero. New/unscored stories remain accessible via Latest.
+    score = (relevance["score"] if relevance else 0) + focus_adjustment(curation_signals(article), prefs)
+    summary = article.summary or {}
+    topic_text = article.title + " " + " ".join(summary.get("topics", []))
+    if prefs.topics and matches_topics(topic_text, prefs.topics):
+        score += 5
     return (
+        score,
+        # Preserve the distinction between an assessed zero and an unknown score.
         relevance is not None,
-        relevance["score"] if relevance else 0,
         aware(article.published_at or article.discovered_at),
     )
 
 
 def prioritized_feed(session, prefs, limit=8):
-    return sorted(session.scalars(select(Article)), key=lambda a: priority_key(a, prefs), reverse=True)[
-        :limit
-    ]
+    articles = [a for a in session.scalars(select(Article).order_by(Article.id)) if include_in_news(a, prefs)]
+    return sorted(articles, key=lambda a: priority_key(a, prefs), reverse=True)[:limit]
 
 
 class JevAnswer(BaseModel):

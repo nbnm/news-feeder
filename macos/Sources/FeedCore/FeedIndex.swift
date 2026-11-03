@@ -7,15 +7,30 @@ public struct FeedIndex: Sendable {
     private let priority: [String]
     private let sourceIDs: [String: Set<String>]
     private let searchText: [String: String]
+    private let suppressed: Set<String>
 
     public init(articles: [Article], preferences: Preferences) {
-        let entries = articles.map { ($0.id, $0.feedDate, $0.currentRelevance(for: preferences)?.score) }
+        let entries = articles.map { article in
+            let relevance = article.currentRelevance(for: preferences)?.score
+            let topicText = article.title + " " + (article.summary?.topics.joined(separator: " ") ?? "")
+            let topicMatch = preferences.topics.contains { topic in
+                let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !trimmed.isEmpty && topicText.range(
+                    of: "\\b" + NSRegularExpression.escapedPattern(for: trimmed) + "\\b",
+                    options: [.regularExpression, .caseInsensitive]) != nil
+            }
+            let score = (relevance ?? 0) + (article.curation?.focusAdjustment(for: preferences) ?? 0)
+                + (topicMatch ? 5 : 0)
+            return (article.id, article.feedDate, relevance, score)
+        }
         latest = entries.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }.map(\.0)
         priority = entries.sorted { left, right in
+            if left.3 != right.3 { return left.3 > right.3 }
             if (left.2 != nil) != (right.2 != nil) { return left.2 != nil }
-            if left.2 != right.2 { return (left.2 ?? 0) > (right.2 ?? 0) }
             return left.1 == right.1 ? left.0 < right.0 : left.1 > right.1
         }.map(\.0)
+        suppressed = preferences.effectiveMajorGithubOnly
+            ? Set(articles.filter { $0.curation?.githubUpdate == "routine" }.map(\.id)) : []
         sourceIDs = Dictionary(uniqueKeysWithValues: articles.map {
             ($0.id, Set(($0.sourceIds ?? []) + [$0.sourceId]))
         })
@@ -44,6 +59,7 @@ public struct FeedIndex: Sendable {
         let query = Self.normalized(search)
         return order.compactMap { id -> Article? in
             guard let article = byID[id] else { return nil }
+            guard section == "saved" || !suppressed.contains(id) else { return nil }
             let memberships = sourceIDs[id] ?? []
             let belongs = section == "all" || (section == "unread" && !article.isRead)
                 || (section == "saved" && article.isSaved)

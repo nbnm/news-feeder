@@ -36,7 +36,7 @@ final class AppModel: ObservableObject {
     @Published var articles: [Article] = [] {
         didSet {
             articlesByID = Dictionary(uniqueKeysWithValues: articles.map { ($0.id, $0) })
-            unreadCount = articles.reduce(0) { $0 + ($1.isRead ? 0 : 1) }
+            updateUnreadCount()
         }
     }
     @Published var categories: [FeedCategory] = []
@@ -45,7 +45,9 @@ final class AppModel: ObservableObject {
     private var feedIndex = FeedIndex(articles: [], preferences: Preferences())
     @Published var sources: [FeedSource] = []
     @Published var digests: [FeedCore.Digest] = []
-    @Published var preferences = Preferences()
+    @Published var preferences = Preferences() {
+        didSet { updateUnreadCount() }
+    }
     @Published var status: BackendStatus?
     @Published var busy = false
     @Published var sending = false
@@ -79,6 +81,13 @@ final class AppModel: ObservableObject {
     }
 
     func start() async { await loadCache(); await sync() }
+
+    private func updateUnreadCount() {
+        unreadCount = articles.reduce(0) { count, article in
+            count + (!article.isRead && (!preferences.effectiveMajorGithubOnly
+                || article.curation?.githubUpdate != "routine") ? 1 : 0)
+        }
+    }
 
     var api: APIClient { APIClient(baseURL: backendURL, token: token) }
     func visibleArticles(section: String, search: String, sort: String) -> [Article] {
@@ -257,6 +266,14 @@ final class AppModel: ObservableObject {
         preferencesRevision += 1
         try await persistPreferences()
         notice = enabled ? "Profile saved" : "Profile saved · prioritization disabled"
+        await sync()
+    }
+
+    func saveNewsMix(focus: Int, majorGithubOnly: Bool) async throws {
+        preferences = try await api.saveNewsMix(focus: focus, majorGithubOnly: majorGithubOnly)
+        preferencesRevision += 1
+        try await persistPreferences()
+        notice = "News mix saved"
         await sync()
     }
 

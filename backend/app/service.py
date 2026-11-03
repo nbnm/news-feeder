@@ -110,10 +110,16 @@ class Service:
         existing, reason = self._delivery_due(session, force)
         if reason:
             return self.delivery_result(existing, reason)
-        prefs = preferences(session)
         current = telegram_settings(self.settings, session)
+        if existing:
+            # A claimed edition owns its original discovery cutoff and payload,
+            # including after a definite failure. Reselecting before a retry
+            # could advance tomorrow's window past stories that were never sent.
+            result = await deliver(session, current, existing.messages, existing.dedupe_key)
+            return self.delivery_result(result)
+        prefs = preferences(session)
         timestamp = now()
-        digest = prepare_daily_digest(session, timestamp)
+        digest = prepare_daily_digest(session, timestamp, refresh_selection=True)
         articles = [session.get(Article, article_id) for article_id in digest.article_ids]
         from zoneinfo import ZoneInfo
 
